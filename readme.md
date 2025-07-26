@@ -137,7 +137,8 @@ python ssda_yolov8_seg_train.py \
   --weights yolov8n-seg.pt \
   --data yamls_sda/pascalvoc0712_clipart1k_VOC.yaml \
   --name voc2clipart_yolov8_seg \
-  --hyp data/hyps/hyp.scratch.yaml
+  --hyp data/hyps/hyp.scratch.yaml \
+  --lambda-u 1.0
 ```
 If you want to resume a breakout training, following the script below.
 ```bash

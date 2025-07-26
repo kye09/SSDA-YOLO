@@ -3,9 +3,9 @@ import yaml
 from pathlib import Path
 
 
-
 class WeightEMA:
-    """Exponential moving average of model weights for teacher update."""
+    """Exponential moving average for updating teacher model."""
+
     def __init__(self, teacher, student, alpha=0.999):
         self.teacher = teacher
         self.student = student
@@ -21,68 +21,70 @@ class WeightEMA:
                 t.data.mul_(self.alpha).add_(s.data * (1.0 - self.alpha))
 
 
-def load_dataset(yaml_file, split):
-    """Load dataset path list from YAML."""
-    with open(yaml_file) as f:
+def parse_data_yaml(data_yaml):
+    with open(data_yaml) as f:
         data = yaml.safe_load(f)
-    imgs = []
-    for path in data[split]:
-        imgs += list(Path(path).glob('*.jpg'))
-    return imgs
+    root = Path(data.get('path', '.'))
+
+    def gather(key):
+        return [str(root / p) for p in data.get(key, [])]
+
+    source = gather('train_source_real') + gather('train_source_fake')
+    target = gather('train_target_real') + gather('train_target_fake')
+    info = {'nc': data['nc'], 'names': data['names'], 'channels': 3}
+    return source, target, info
 
 
-def collate_fn(batch):
-    import torch
+def build_loaders(source, target, info, cfg):
+    from ultralytics.data import build_yolo_dataset, build_dataloader
 
-    imgs, labels = zip(*batch)
-    imgs = torch.stack(imgs, 0)
-    return imgs, labels
+    dataset_s = build_yolo_dataset(cfg, source, cfg.batch, info, mode='train')
+    dataset_t = build_yolo_dataset(cfg, target, cfg.batch, info, mode='train')
+    loader_s = build_dataloader(dataset_s, batch=cfg.batch, workers=2, shuffle=True)
+    loader_t = build_dataloader(dataset_t, batch=cfg.batch, workers=2, shuffle=True)
+    return loader_s, loader_t
 
 
 def train(opt):
     import torch
     from ultralytics import YOLO
+    from ultralytics.cfg import get_cfg
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    cfg = get_cfg({'imgsz': opt.img_size, 'batch': opt.batch_size, 'epochs': opt.epochs, 'lr0': opt.lr, 'task': 'segment'})
+    source, target, info = parse_data_yaml(opt.data)
+    loader_s, loader_t = build_loaders(source, target, info, cfg)
+
     student = YOLO(opt.weights).to(device)
     teacher = YOLO(opt.weights).to(device)
     ema = WeightEMA(teacher.model, student.model, opt.ema_alpha)
-
-    # dataloaders
-    source_imgs = load_dataset(opt.data, 'train_source_real')
-    target_imgs = load_dataset(opt.data, 'train_target_real')
-    dataset_s = student.Dataset(source_imgs, imgsz=opt.img_size)
-    dataset_t = student.Dataset(target_imgs, imgsz=opt.img_size, label=False)
-
-    loader_s = torch.utils.data.DataLoader(dataset_s, batch_size=opt.batch_size,
-                                           shuffle=True, collate_fn=collate_fn)
-    loader_t = torch.utils.data.DataLoader(dataset_t, batch_size=opt.batch_size,
-                                           shuffle=True, collate_fn=collate_fn)
-
     optimizer = torch.optim.SGD(student.model.parameters(), lr=opt.lr, momentum=0.9)
+    mse = torch.nn.MSELoss()
 
     for epoch in range(opt.epochs):
-        for (imgs_s, labels_s), (imgs_t, _) in zip(loader_s, loader_t):
-            imgs_s, imgs_t = imgs_s.to(device), imgs_t.to(device)
+        for batch_s, batch_t in zip(loader_s, loader_t):
+            for k, v in batch_s.items():
+                if hasattr(v, 'to'):
+                    batch_s[k] = v.to(device)
+            for k, v in batch_t.items():
+                if hasattr(v, 'to'):
+                    batch_t[k] = v.to(device)
 
-            # supervised loss on source
-            preds_s = student.model(imgs_s)
-            loss_s = student.loss(preds_s, labels_s)
+            preds_s = student.model(batch_s['img'])
+            loss_s = student.model.loss(batch_s, preds_s)
 
-            # pseudo labels from teacher
             with torch.no_grad():
-                teacher_preds = teacher.model(imgs_t)
-            pseudo = [p[p[..., 4] > opt.conf_thres] for p in teacher_preds]
-            preds_t = student.model(imgs_t)
-            loss_t = student.loss(preds_t, pseudo)
+                t_out = teacher.model(batch_t['img'])
+            s_out = student.model(batch_t['img'])
+            loss_u = mse(s_out[0], t_out[0].detach()) if isinstance(s_out, (list, tuple)) else mse(s_out, t_out.detach())
 
-            loss = loss_s + opt.lambda_u * loss_t
+            loss = loss_s + opt.lambda_u * loss_u
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            optimizer.zero_grad()
             ema.update()
 
-        print(f'Epoch {epoch+1}/{opt.epochs}: loss={loss.item():.4f}')
+        print(f'Epoch {epoch + 1}/{opt.epochs}: loss={loss.item():.4f}')
 
     save_dir = Path(opt.project) / opt.name
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -99,7 +101,6 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=16)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--lambda-u', type=float, default=1.0)
-    parser.add_argument('--conf-thres', type=float, default=0.5)
     parser.add_argument('--ema-alpha', type=float, default=0.999)
     parser.add_argument('--project', type=str, default='runs/train')
     parser.add_argument('--name', type=str, default='ssda_yolov8_seg')
