@@ -98,6 +98,15 @@ if __name__ == '__main__':
     parser.add_argument('--ema-alpha', type=float, default=0.999)
     parser.add_argument('--project', type=str, default='runs/train')
     parser.add_argument('--name', type=str, default='ssda_yolov8_seg')
+    parser.add_argument('--hyp', type=str, default=None, help='hyperparameter yaml')
     opt = parser.parse_args()
+
+    if opt.hyp:
+        with open(opt.hyp) as f:
+            hyp = yaml.safe_load(f)
+        for k, v in hyp.items():
+            attr = k.replace('-', '_')
+            if hasattr(opt, attr):
+                setattr(opt, attr, v)
 
     train(opt)

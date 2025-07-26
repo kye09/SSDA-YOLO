@@ -136,7 +136,8 @@ Use `ssda_yolov8_seg_train.py` with Ultralytics YOLOv8 segmentation.
 python ssda_yolov8_seg_train.py \
   --weights yolov8n-seg.pt \
   --data yamls_sda/pascalvoc0712_clipart1k_VOC.yaml \
-  --name voc2clipart_yolov8_seg
+  --name voc2clipart_yolov8_seg \
+  --hyp data/hyps/hyp.scratch.yaml
 ```
 If you want to resume a breakout training, following the script below.
 ```bash
