@@ -779,7 +779,46 @@ def parse_opt(known=False):
     parser.add_argument('--teacher_weight', type=str, default='None', help='Resuming weights path of teacher model in UMT')
     parser.add_argument('--save_dir', type=str, default='None', help='Resuming project path in UMT')
     opt = parser.parse_known_args()[0] if known else parser.parse_args()
-    return opt
+
+    # Build overrides dict from parsed options
+    overrides = vars(opt).copy()
+
+    # Parse hyperparameters from --hyp argument
+    if isinstance(opt.hyp, str):
+        hyp_path = Path(opt.hyp)
+        try:
+            if hyp_path.is_file():
+                with open(hyp_path) as f:
+                    hyp = yaml.safe_load(f)
+            else:
+                # try YAML string first then key=value pairs
+                try:
+                    hyp = yaml.safe_load(opt.hyp)
+                    if not isinstance(hyp, dict):
+                        raise Exception
+                except Exception:
+                    hyp = {}
+                    for kv in opt.hyp.replace(',', ' ').split():
+                        if '=' in kv:
+                            k, v = kv.split('=', 1)
+                            hyp[k] = yaml.safe_load(v)
+
+            # Warn about unknown fields
+            try:
+                with open('data/hyps/hyp.scratch.yaml') as f:
+                    default_keys = yaml.safe_load(f).keys()
+                unknown = [k for k in hyp if k not in default_keys]
+                if unknown:
+                    logger.warning(f"Unknown hyperparameter fields: {', '.join(unknown)}")
+            except Exception:
+                pass
+
+            opt.hyp = hyp
+            overrides['hyp'] = hyp
+        except Exception as e:
+            logger.warning(f'Failed to parse --hyp: {e}')
+
+    return opt, overrides
 
 
 def main(opt):
@@ -827,6 +866,6 @@ def main(opt):
 
 
 if __name__ == "__main__":
-    opt = parse_opt()
+    opt, overrides = parse_opt()
     main(opt)
 
