@@ -2,8 +2,6 @@ import argparse
 import yaml
 from pathlib import Path
 
-import torch
-from ultralytics import YOLO
 
 
 class WeightEMA:
@@ -15,10 +13,12 @@ class WeightEMA:
         for p in self.teacher.parameters():
             p.requires_grad = False
 
-    @torch.no_grad()
     def update(self):
-        for t, s in zip(self.teacher.parameters(), self.student.parameters()):
-            t.data.mul_(self.alpha).add_(s.data * (1.0 - self.alpha))
+        import torch
+
+        with torch.no_grad():
+            for t, s in zip(self.teacher.parameters(), self.student.parameters()):
+                t.data.mul_(self.alpha).add_(s.data * (1.0 - self.alpha))
 
 
 def load_dataset(yaml_file, split):
@@ -32,12 +32,17 @@ def load_dataset(yaml_file, split):
 
 
 def collate_fn(batch):
+    import torch
+
     imgs, labels = zip(*batch)
     imgs = torch.stack(imgs, 0)
     return imgs, labels
 
 
 def train(opt):
+    import torch
+    from ultralytics import YOLO
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     student = YOLO(opt.weights).to(device)
     teacher = YOLO(opt.weights).to(device)
