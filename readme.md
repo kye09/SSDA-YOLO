@@ -130,6 +130,14 @@ python -m torch.distributed.launch --nproc_per_node 4 \
   --lambda_weight 0.005 --consistency_loss --alpha_weight 2.0
 ```
 
+### YOLOv8 Segmentation Training (Experimental)
+Use `ssda_yolov8_seg_train.py` with Ultralytics YOLOv8 segmentation.
+```bash
+python ssda_yolov8_seg_train.py \
+  --weights yolov8n-seg.pt \
+  --data yamls_sda/pascalvoc0712_clipart1k_VOC.yaml \
+  --name voc2clipart_yolov8_seg
+```
 If you want to resume a breakout training, following the script below.
 ```bash
 python -m torch.distributed.launch --nproc_per_node 4 -master_port 12345 \
